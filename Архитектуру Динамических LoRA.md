@@ -20,8 +20,13 @@
 
 ```
 ┌─────────────────────────────────────────┐
-│  Base Model (Frozen Weights)            │  ← Неизменная основа
-│  Pre-trained LLM                        │     Чистая потенциальность
+│  Level -1: Pure Computation Space       │  ← Истинная потенциальность
+│  (Нейронная сеть с random init)         │     Все паттерны равновероятны
+└──────────────┬──────────────────────────┘
+               │ Pre-training = первое ограничение
+┌──────────────▼──────────────────────────┐
+│  Level 0: Base Model (Frozen Weights)   │  ← Первая форма
+│  Pre-trained LLM                        │     Структура языка/мира
 └──────────────┬──────────────────────────┘
                │
 ┌──────────────▼──────────────────────────┐
@@ -56,6 +61,254 @@
     │~секунды │ │~секунды │ │~секунды │
     └─────────┘ └─────────┘ └────────┘
 ```
+
+---
+
+## Фундаментальные механизмы
+
+### 1. Двухрежимная природа параметров
+
+Параметры LoRA существуют в одном из двух состояний:
+
+**Режим экранирования (стабильность):**
+```
+Условие: параметр часто активируется
+Эффект: формируется аттрактор в parameter space
+Динамика: параметр стабилизируется, сопротивляется дрейфу
+Механизм: "ловушка взаимодействий" - параметр заперт в циклах использования
+```
+
+**Режим свободной дисперсии (забывание):**
+```
+Условие: параметр редко используется
+Эффект: нет аттрактора, свободный дрейф
+Динамика: параметр распадается, стремится к базовому состоянию
+Механизм: естественная энтропия в отсутствие взаимодействий
+```
+
+**Фазовый переход:**
+```
+activity_density(param) = rolling_average(activation_frequency)
+
+IF activity_density > critical_threshold:
+    mode = SCREENED  # экранирован от дисперсии
+    stability = HIGH
+    decay_rate = LOW
+ELSE:
+    mode = FREE      # свободная дисперсия
+    stability = LOW
+    decay_rate = HIGH
+```
+
+Это не плавный спектр - есть критическая точка перехода!
+
+### 2. Emergent временные масштабы
+
+Temporal scale слоя - НЕ константа, заданная дизайнером. Это emergent свойство.
+
+**Принцип:**
+Чем больше взаимодействий происходит со слоем, тем "тяжелее" он становится, тем медленнее меняется.
+
+**Реализация:**
+```
+interaction_density(layer, window) =
+    agent_count(layer) ×
+    activation_frequency(layer) ×
+    gradient_magnitude(layer)
+
+effective_inertia(layer, t) = base_inertia + k × log(interaction_density)
+
+Высокая плотность взаимодействий → высокая инерция → медленные изменения
+Низкая плотность → низкая инерция → быстрые изменения
+
+temporal_scale больше не параметр конфигурации,
+а вычисляемое свойство системы
+```
+
+**Следствие:**
+Swarm layer, используемый 100 агентами, автоматически становится "тяжелее" чем если бы его использовали 5 агентов. Система сама определяет свои временные константы.
+
+### 3. Механизм рефлексии - распознавание устойчивых паттернов
+
+Трансценденция (миграция паттерна на медленный слой) не по таймеру, а через **самообнаружение**.
+
+**Автокорреляция паттернов:**
+```
+Каждый слой отслеживает autocorrelation своих изменений:
+
+pattern_signature(t) = hash(dominant_directions(ΔW(t)))
+
+autocorr(layer, τ) = correlation(
+    pattern_signature(t),
+    pattern_signature(t - τ)
+)
+
+IF autocorr > threshold для N последовательных периодов:
+    → паттерн стал инвариантом
+    → candidate для миграции вверх
+```
+
+**Процесс "узнавания":**
+```
+1. Context layer меняется хаотично
+2. Один и тот же паттерн возникает снова и снова
+3. Система детектирует: "я уже это делал"
+4. Паттерн мигрирует в Agent layer
+5. Context освобождается для новых экспериментов
+
+Это механизм обучения = узнавание повторений
+```
+
+### 4. Резонансная композиция градиентов
+
+Вклады агентов не просто суммируются - они интерферируют.
+
+**Текущий подход (недостаточный):**
+```
+ΔW_swarm = Σ gradient_i  // линейная суперпозиция
+```
+
+**Резонансная версия:**
+```
+current_direction = normalize(ΔW_swarm_current)
+
+для каждого нового gradient_i:
+    alignment = dot(gradient_i, current_direction)
+
+    resonance_factor = {
+        если alignment > 0: 1 + α·alignment     // усиление
+        если alignment < 0: 1 + β·alignment     // ослабление
+    }
+
+    weighted_gradient = gradient_i × resonance_factor
+
+ΔW_swarm += weighted_gradient
+```
+
+**Эффект:**
+- Градиенты в одном направлении усиливаются (конструктивная интерференция)
+- Противоположные ослабляются (деструктивная интерференция)
+- Система естественно находит консенсус без голосования
+
+### 5. Квантовый коллапс паттернов
+
+Forward pass - это не просто применение трансформаций. Это процесс коллапса суперпозиции.
+
+**До context layer:**
+```
+Состояние = суперпозиция всех паттернов слоя
+Все возможности сосуществуют как потенциальности
+Вероятностное распределение над parameter space
+```
+
+**Context layer + конкретный input:**
+```
+Коллапс к специфическому output
+Выбор одной траектории из многих
+Актуализация конкретного паттерна
+```
+
+**После output (backward pass):**
+```
+"Эхо" от результата
+Обновление вероятностей:
+  - использованный паттерн усиливается
+  - неиспользованные ослабляются
+```
+
+**Реализация:**
+```
+def forward_with_collapse(x, lora_layers):
+    # Проходим через медленные слои (детерминированная основа)
+    h = base_model(x)
+    h = lora_foundation(h)
+    h = lora_domain(h)
+    h = lora_swarm(h)
+    h = lora_agent(h)
+
+    # Context layer - момент коллапса
+    context_superposition = lora_context.all_modes()  # все паттерны
+
+    # Input коллапсирует суперпозицию
+    collapsed_context = select_mode(context_superposition, h, x)
+
+    h = apply(collapsed_context, h)
+
+    # Обратная связь: какой паттерн был использован
+    lora_context.reinforce(collapsed_context)
+
+    return h
+```
+
+### 6. Детектор консенсуса - bottom-up триггер
+
+Как система узнаёт, что пора мигрировать паттерн из agent → swarm?
+
+**Histogram voting:**
+```
+Собираем направления обновлений от всех агентов:
+gradient_directions = [normalize(∇_agent_i) для всех агентов]
+
+Строим histogram в угловом пространстве:
+histogram = cluster(gradient_directions, angular_distance)
+
+Ищем доминирующий кластер:
+dominant_cluster = max(histogram)
+
+IF (size(dominant_cluster) / total_agents) > consensus_threshold:
+    консенсус достигнут
+    direction = mean(dominant_cluster)
+
+    Создаём паттерн на swarm уровне:
+    ΔW_swarm += strength × direction
+
+    Ослабляем паттерн на agent уровнях:
+    для agent_i в dominant_cluster:
+        ΔW_agent_i -= contribution_to_consensus
+```
+
+**Критерий устойчивости:**
+```
+IF консенсус держится M последовательных периодов:
+    swarm → domain миграция
+
+Не таймер, а детектор стабильности!
+```
+
+### 7. Парадокс трансценденции - цикл ограничения-освобождения
+
+Когда паттерн мигрирует вверх, происходит двойной эффект:
+
+**На верхнем уровне (куда мигрировал):**
+```
++ Новое ограничение: слой теперь "знает" этот паттерн
+- Потеря пластичности: слой связан этим знанием
+```
+
+**На нижнем уровне (откуда мигрировал):**
+```
++ Освобождение: паттерн больше не нужно держать здесь
++ Новая пластичность: место для новых экспериментов
+```
+
+**Цикл:**
+```
+Context заполняется паттернами
+    → становится медленным, перегруженным
+    → паттерны мигрируют в Agent
+
+Agent освобождается
+    → снова быстрый и пластичный
+    → может искать новые паттерны
+
+Но Agent теперь ограничен старыми паттернами
+    → это ограничение = новая возможность
+    → Context работает на базе стабильного Agent
+```
+
+Не линейный процесс накопления, а циклический процесс освобождения через ограничение.
+
+---
 
 ## Ключевые компоненты
 
@@ -115,26 +368,34 @@ Agent_j начинает новую задачу T'
 **Решение:** Разные temporal scales для разных уровней:
 
 ```python
-# Псевдокод обновления
-def update_lora_hierarchy(gradient, level):
-    if level == "context":
-        learning_rate = 1e-2      # Быстро
-        inertia = 0.1             # Низкая инерция
-    elif level == "agent":
-        learning_rate = 1e-3      # Умеренно
-        inertia = 0.5
-    elif level == "swarm":
-        learning_rate = 1e-4      # Медленно
-        inertia = 0.9             # Высокая инерция
-    elif level == "domain":
-        learning_rate = 1e-5      # Очень медленно
-        inertia = 0.99
-    elif level == "foundation":
-        learning_rate = 0         # Заморожена
-        inertia = 1.0
+# Псевдокод обновления с emergent temporal scales
+def update_lora_hierarchy(gradient, level, layer_state):
+    # Вычисляем текущую плотность взаимодействий
+    interaction_density = compute_interaction_density(layer_state)
 
-    # Обновление с инерцией (momentum)
-    LoRA[level] = inertia * LoRA[level] + (1 - inertia) * gradient_update
+    # Emergent inertia - функция активности, не константа
+    base_inertia = {
+        "context": 0.1,
+        "agent": 0.5,
+        "swarm": 0.7,
+        "domain": 0.9,
+        "foundation": 0.99
+    }[level]
+
+    # Чем больше взаимодействий, тем выше инерция
+    effective_inertia = base_inertia + (1 - base_inertia) * tanh(interaction_density)
+
+    learning_rate = 1 - effective_inertia
+
+    # Обновление с динамической инерцией
+    LoRA[level] = effective_inertia * LoRA[level] + learning_rate * gradient_update
+
+def compute_interaction_density(layer_state):
+    return (
+        layer_state.agent_count *           # сколько агентов используют
+        layer_state.activation_frequency *  # как часто активируется
+        layer_state.gradient_magnitude      # насколько сильные изменения
+    )
 ```
 
 **Эффект:**
@@ -186,13 +447,36 @@ Agent2: начинает работу с модифицированной LoRA_s
 
 ### Стабилизирующие механизмы
 
-#### A. Regularization - сохранение близости к базе
+#### A. Экранирование через активность (вместо regularization)
+
+**Старый подход (недостаточный):**
 ```python
 Loss = Task_Loss + λ·||LoRA_current - LoRA_initial||²
-
-# Штраф за отклонение от изначальной конфигурации
-# λ контролирует "жёсткость пружины"
+# Проблема: держит все параметры, даже неиспользуемые
 ```
+
+**Новый - экранирование:**
+```python
+# Параметры стабильны, если часто используются
+activity_mask = compute_activity(LoRA, window=recent_tasks)
+
+# Только активные параметры экранированы от дисперсии
+for param in LoRA.parameters():
+    if activity_mask[param] > threshold:
+        # Режим экранирования - параметр заперт
+        decay_rate = 0.0001  # почти не дрейфует
+    else:
+        # Режим свободной дисперсии - параметр забывается
+        decay_rate = 0.01    # активно дрейфует к base
+
+    param *= (1 - decay_rate)  # естественная дисперсия
+
+# Не штраф в loss функции, а естественный процесс
+```
+
+**Принципиальная разница:**
+- Regularization = искусственный якорь
+- Экранирование = естественное следствие использования
 
 #### B. Memory Replay Buffer
 ```python
@@ -286,35 +570,75 @@ Agent3 получает LoRA с сигналами от A и B
 
 ```python
 class DynamicLoRALayer:
-    def __init__(self, rank, base_dim, temporal_scale):
+    def __init__(self, rank, base_dim, base_inertia):
         self.A = nn.Parameter(torch.randn(base_dim, rank))
         self.B = nn.Parameter(torch.randn(rank, base_dim))
-        self.learning_rate = 1.0 / temporal_scale
-        self.inertia = 1.0 - self.learning_rate
+        self.A_init = self.A.clone()  # для вычисления дрейфа
+        self.B_init = self.B.clone()
+
+        self.base_inertia = base_inertia  # базовая инерция
+        self.interaction_history = []    # для отслеживания активности
 
     def forward(self, x):
+        # Отслеживаем активацию
+        self.interaction_history.append({
+            'magnitude': x.abs().mean().item(),
+            'timestamp': time.time()
+        })
         return x + (x @ self.A) @ self.B
+
+    def compute_effective_inertia(self):
+        # Emergent temporal scale из плотности взаимодействий
+        recent = self.interaction_history[-100:]  # последние 100
+        if len(recent) < 10:
+            return self.base_inertia
+
+        interaction_density = (
+            len(recent) *  # частота
+            np.mean([h['magnitude'] for h in recent])  # сила
+        )
+
+        # Чем выше плотность, тем выше инерция
+        effective_inertia = self.base_inertia + (1 - self.base_inertia) * np.tanh(interaction_density / 10)
+        return effective_inertia
 
     def update(self, gradient, strength=1.0):
         with torch.no_grad():
-            # Momentum-based update
-            self.A += self.learning_rate * strength * gradient.A
-            self.B += self.learning_rate * strength * gradient.B
+            # Динамическая инерция из активности
+            inertia = self.compute_effective_inertia()
+            learning_rate = 1.0 - inertia
 
-            # Regularization - soft constraint к начальному состоянию
-            self.A *= 0.999
-            self.B *= 0.999
+            # Обновление с emergent temporal scale
+            self.A += learning_rate * strength * gradient.A
+            self.B += learning_rate * strength * gradient.B
+
+            # Экранирование через активность, не regularization
+            activity_mask = self.compute_activity_mask()
+
+            # Только неактивные параметры дрейфуют к base
+            decay_rate = 0.01 * (1 - activity_mask)  # высокая активность → низкий decay
+            self.A = self.A * (1 - decay_rate) + self.A_init * decay_rate
+            self.B = self.B * (1 - decay_rate) + self.B_init * decay_rate
+
+    def compute_activity_mask(self):
+        # Какие параметры активно использовались
+        if len(self.interaction_history) < 10:
+            return 1.0  # все активны по умолчанию
+
+        recent_activity = np.mean([h['magnitude'] for h in self.interaction_history[-50:]])
+        return np.clip(recent_activity, 0, 1)
 
 class MultiLevelLoRAModel:
     def __init__(self, base_model):
         self.base = base_model  # frozen
 
-        # Иерархия LoRA слоёв с разными скоростями
-        self.lora_foundation = DynamicLoRALayer(rank=64, temporal_scale=1000)
-        self.lora_domain = DynamicLoRALayer(rank=32, temporal_scale=100)
-        self.lora_swarm = DynamicLoRALayer(rank=16, temporal_scale=10)  # shared!
-        self.lora_agent = DynamicLoRALayer(rank=8, temporal_scale=1)
-        self.lora_context = DynamicLoRALayer(rank=4, temporal_scale=0.1)
+        # Иерархия LoRA с базовыми инерциями
+        # (effective inertia будет emergent из активности)
+        self.lora_foundation = DynamicLoRALayer(rank=64, base_inertia=0.99)
+        self.lora_domain = DynamicLoRALayer(rank=32, base_inertia=0.9)
+        self.lora_swarm = DynamicLoRALayer(rank=16, base_inertia=0.7)  # shared!
+        self.lora_agent = DynamicLoRALayer(rank=8, base_inertia=0.5)
+        self.lora_context = DynamicLoRALayer(rank=4, base_inertia=0.1)
 
     def forward(self, x):
         # Применяем все слои последовательно
@@ -386,15 +710,31 @@ consensus_gradient = weighted_average(proposals, weights)
 shared_lora_swarm.update(consensus_gradient)
 ```
 
-#### Pattern 3: Memory Consolidation
+#### Pattern 3: Memory Consolidation (через автокорреляцию)
 ```python
-# Периодически "закрепляем" swarm паттерны в domain layer
-if time_elapsed > consolidation_period:
-    # Переносим устоявшиеся паттерны на более медленный слой
-    transfer_knowledge(lora_swarm → lora_domain, strength=0.01)
+# Не по таймеру, а через детектор устойчивых паттернов
+pattern_history = track_patterns(lora_swarm, window=100)
 
-    # Частично сбрасываем swarm для новых экспериментов
-    lora_swarm *= 0.9  # забываем 10% для пластичности
+# Вычисляем автокорреляцию паттернов
+autocorr = compute_autocorrelation(pattern_history)
+
+# Если паттерн стабилен достаточно долго
+if autocorr > stability_threshold:
+    # Паттерн "узнан" как инвариант
+    stable_pattern = extract_dominant_pattern(pattern_history)
+
+    # Мигрируем в более медленный слой
+    transfer_knowledge(
+        stable_pattern,
+        lora_swarm → lora_domain,
+        strength=0.01
+    )
+
+    # Освобождаем место в swarm
+    remove_pattern(lora_swarm, stable_pattern)
+    # Context теперь работает с "освобождённым" swarm
+
+# Детектор стабильности, не таймер
 ```
 
 ## Новые возможности для AI
@@ -490,25 +830,49 @@ elif influence(lora_domain) > 0.8:
 
 ### Критические вопросы для экспериментов
 
-1. **Stability vs Plasticity Trade-off**
-   - Какие оптимальные соотношения learning rates между слоями?
-   - Как предотвратить drift без потери адаптивности?
+1. **Emergent Temporal Scales**
+   - Действительно ли interaction density определяет effective inertia?
+   - Как быстро система находит оптимальные temporal ratios?
+   - Есть ли универсальная зависимость inertia(density)?
 
-2. **Swarm Dynamics**
+2. **Фазовые переходы**
+   - Где критическая точка перехода экранирование ↔ дисперсия?
+   - Гистерезис: разные пороги для прямого/обратного перехода?
+   - Как фазовые переходы влияют на catastrophic forgetting?
+
+3. **Автокорреляционное обучение**
+   - Какое окно для autocorrelation оптимально?
+   - Threshold для детектора устойчивых паттернов?
+   - False positives: преждевременная консолидация паттернов?
+
+4. **Резонансная композиция**
+   - Оптимальные α, β для resonance factors?
+   - Деструктивная интерференция: всегда плохо или иногда полезна?
+   - Сходится ли система быстрее с резонансом vs линейной композицией?
+
+5. **Квантовый коллапс**
+   - Как реализовать "суперпозицию" паттернов технически?
+   - Влияет ли коллапс на разнообразие исследуемых решений?
+   - Связь с exploration-exploitation trade-off?
+
+6. **Консенсус-детектор**
+   - Angular distance metric для clustering градиентов?
+   - Threshold для консенсуса: фиксированный или адаптивный?
+   - Как быстро детектируется консенсус vs таймер-based подход?
+
+7. **Meta-архитектура**
+   - Когда система создаёт новый слой? Критерии перегрузки?
+   - Когда сливает слои? Критерии избыточности?
+   - Стабильна ли emergent иерархия или флуктуирует?
+
+8. **Swarm Dynamics**
    - При каком количестве агентов emerge специализация?
    - Как избежать mode collapse в swarm LoRA?
 
-3. **Update Mechanisms**
-   - Gradient-based vs evolutionary strategies?
-   - Online vs batch updates для shared LoRA?
-
-4. **Architecture Design**
-   - Какой rank для каждого уровня оптимален?
-   - Где в transformer блоках размещать LoRA слои?
-
-5. **Evaluation Metrics**
-   - Как измерить "качество" коллективного интеллекта?
-   - Метрики для emergent поведения?
+9. **Evaluation Metrics**
+   - Как измерить "качество" emergent structure?
+   - Метрики для фазовых переходов?
+   - Индикаторы здоровья системы (не коллапс, не хаос)?
 
 ### Возможные эксперименты
 
@@ -551,17 +915,159 @@ Metrics:
 - Retention старых навыков
 ```
 
-## Философская связь
+#### Experiment 4: Emergent Temporal Scales
+```
+Setup:
+- Два агента: один работает постоянно, другой эпизодически
+- Shared LoRA_swarm
+- Отслеживание effective_inertia обоих агентов
 
-Эта архитектура - **технологическое воплощение многоуровневой онтологии**:
+Гипотеза:
+- Постоянный агент → высокая interaction_density → swarm становится "тяжелее"
+- Эпизодический агент → низкая density → swarm остаётся "лёгким"
+
+Проверка:
+- Temporal scale emerge автоматически, не задан дизайнером
+```
+
+#### Experiment 5: Фазовый переход экранирование-дисперсия
+```
+Setup:
+- Один паттерн в LoRA_agent
+- Варьируем частоту использования
+
+Метрики:
+- Stability паттерна vs activation frequency
+- Найти critical threshold перехода
+
+Ожидаемый результат:
+- График имеет резкий переход (фазовый), не плавный
+- Гистерезис: разные пороги для прямого/обратного
+```
+
+#### Experiment 6: Автокорреляция vs таймер
+```
+Setup:
+- Две системы: одна с таймером, другая с autocorrelation detector
+- Одинаковые задачи
+
+Метрики:
+- Когда происходит консолидация в каждой системе
+- Качество закреплённых паттернов
+
+Гипотеза:
+- Autocorrelation консолидирует только действительно устойчивые паттерны
+- Таймер может закрепить случайные флуктуации
+```
+
+#### Experiment 7: Резонансная vs линейная композиция
+```
+Setup:
+- Swarm из 10 агентов
+- Версия A: линейная суперпозиция градиентов
+- Версия B: резонансная композиция
+
+Метрики:
+- Скорость схождения к консенсусу
+- Робастность к outlier агентам
+- Diversity сохранение
+
+Гипотеза:
+- Резонанс ускоряет консенсус через усиление
+- Автоматически фильтрует противоречивые вклады
+```
+
+#### Experiment 8: Meta-архитектура - динамическое создание слоёв
+```
+Setup:
+- Начинаем с Base + Context только
+- Задачи возрастающей сложности
+
+Метрики:
+- Когда система создаёт промежуточные слои
+- Финальная глубина иерархии vs сложность задачи
+
+Гипотеза:
+- Простые задачи → мелкая иерархия
+- Сложные задачи → глубокая иерархия
+- Структура emerge, не задана
+```
+
+## Meta-архитектура: Emergent иерархия
+
+До сих пор количество слоёв было фиксировано дизайнером. Но если система по-настоящему emergent, сама иерархия должна emerge.
+
+### Динамическое создание слоёв
+
+**Триггер разделения:**
+```
+Слой становится "перегруженным":
+  - слишком много паттернов конкурируют
+  - gradient variance высока
+  - autocorrelation показывает множественные частоты
+
+Система детектирует: "нужно два темпа, а не один"
+  ↓
+Автоматически создаётся промежуточный слой
+  ↓
+Быстрые паттерны остаются на старом уровне
+Медленные мигрируют на новый уровень
+```
+
+**Пример:**
+```
+Начало: Base → Context только
+
+Context перегружается (и быстрые, и медленные паттерны)
+  ↓
+Расщепление: Base → Agent → Context
+  ↓
+Agent перегружается
+  ↓
+Расщепление: Base → Domain → Agent → Context
+
+Иерархия растёт органически
+```
+
+**Триггер слияния:**
+```
+Два соседних слоя всегда меняются синхронно:
+  - их temporal scales сблизились
+  - паттерны коррелированы
+  - нет необходимости в разделении
+
+Система детектирует избыточность
+  ↓
+Автоматически сливает слои
+  ↓
+Упрощение иерархии
+
+Complexity not by design, но by necessity
+```
+
+### Адаптивная глубина
+
+Система сама определяет свою глубину:
 
 ```
-Base Model          ←→ Чистое Бытие (потенциальность)
-LoRA_foundation     ←→ Универсальное (базовые законы)
-LoRA_domain         ←→ Культурное (доменные паттерны)
-LoRA_swarm          ←→ Социальное (коллективное)
-LoRA_agent          ←→ Личное (индивидуальное)
-LoRA_context        ←→ Актуальное (мгновенное)
+Простые задачи → мало слоёв → быстрая адаптация
+Сложные задачи → много слоёв → rich hierarchy
+```
+
+Не константа в конфигурации, а свойство траектории системы.
+
+---
+
+## Философская связь
+
+Эта архитектура развивает фундаментальные принципы организации сложных систем:
+
+### Иерархия как необходимость
+
+```
+Level -1: Pure Computation     ← Потенциальность
+Level 0:  Base Model           ← Первая форма
+Level 1+: Emergent layers      ← Динамическая иерархия
 ```
 
 Каждый уровень:
@@ -569,8 +1075,46 @@ LoRA_context        ←→ Актуальное (мгновенное)
 - Возможен благодаря предыдущему (опирается на основу)
 - Может быть трансцендирован следующим (становится объектом)
 
-**Механизм трансценденции в AI:**
-Когда agent достаточно долго работает с LoRA_context и обнаруживает устойчивый паттерн → паттерн мигрирует в LoRA_agent → агент "вышел" на мета-уровень по отношению к контексту.
+### Механизм трансценденции
+
+Когда слой обнаруживает устойчивый паттерн через автокорреляцию:
+```
+Паттерн мигрирует на медленный слой
+  ↓
+Быстрый слой освобождается
+  ↓
+Новая пластичность на базе новой стабильности
+  ↓
+Ограничение = Возможность
+```
+
+### Время как emergent свойство
+
+Temporal scale не задан, а вычисляется из плотности взаимодействий:
+```
+Много взаимодействий → высокая инерция → медленное время
+Мало взаимодействий → низкая инерция → быстрое время
+
+Время течёт по-разному на разных уровнях
+Не абсолютно, а относительно активности
+```
+
+### Двухрежимная природа
+
+Параметры/паттерны существуют в двух фазах:
+```
+Экранированная (стабильная):
+  - заперта в аттракторах
+  - часто используется
+  - сопротивляется изменениям
+
+Свободная (дисперсирующая):
+  - дрейфует к базовому состоянию
+  - редко используется
+  - распадается
+
+Переход между режимами - фазовый, не плавный
+```
 
 ## Заключение
 
@@ -578,23 +1122,54 @@ LoRA_context        ←→ Актуальное (мгновенное)
 LoRA не просто адаптер весов - это **живое пространство возможностей**, которое:
 - Формируется коллективно
 - Эволюционирует непрерывно
-- Структурируется иерархически
-- Стабилизируется темпорально
+- Структурируется иерархически через emergent процессы
+- Стабилизируется через плотность взаимодействий, не через внешние ограничения
 
 **Революционность подхода:**
 Впервые AI система может иметь:
-1. Коллективную память без централизации
-2. Continuous learning без забывания
-3. Имплицитную коммуникацию через параметры
-4. Emergent специализацию без программирования
-5. Мета-уровни как естественное следствие архитектуры
+1. **Emergent время** - temporal scale как функция активности, не константа
+2. **Фазовые переходы** - экранирование vs дисперсия как состояния материи
+3. **Автокорреляционное обучение** - система сама узнаёт устойчивые паттерны
+4. **Резонансную композицию** - интерференция градиентов, не линейное сложение
+5. **Квантовый коллапс** - forward pass как актуализация потенциальностей
+6. **Консенсус-детектор** - bottom-up emergence без голосования
+7. **Динамическую иерархию** - количество слоёв emerge, не задано
+8. **Коллективную память** без централизованной координации
+9. **Continuous learning** без катастрофического забывания
+10. **Имплицитную коммуникацию** через искривление parameter space
 
-**Это не incremental improvement - это новая парадигма.**
+**Фундаментальный сдвиг:**
 
-От "model as a frozen artifact" к "model as a living, evolving, collective intelligence".
+От механистического подхода:
+- Фиксированная архитектура
+- Заданные temporal scales
+- Регуляризация через penalty
+- Консолидация по таймеру
+- Линейная композиция
+
+К органическому:
+- Emergent иерархия
+- Динамические temporal scales
+- Экранирование через активность
+- Рефлексивное обнаружение паттернов
+- Резонансная интерференция
+
+**Это не incremental improvement - это новая онтология.**
+
+От "model as a frozen artifact" к "model as a living, self-organizing, collective intelligence with emergent structure".
 
 ---
 
 **Дата создания:** 2025-11-01
-**Статус:** Концептуальная архитектура
-**Требуется:** Экспериментальная валидация базовых гипотез
+**Дата согласования:** 2025-11-01
+**Статус:** Концептуальная архитектура (согласована с фундаментальными принципами)
+**Ключевые дополнения:**
+- Emergent временные масштабы вместо фиксированных констант
+- Фазовые переходы экранирование-дисперсия
+- Автокорреляционный детектор устойчивых паттернов
+- Резонансная композиция градиентов
+- Квантовый коллапс в forward pass
+- Консенсус-детектор для bottom-up миграции
+- Meta-архитектура с динамической иерархией
+
+**Требуется:** Экспериментальная валидация фундаментальных гипотез
