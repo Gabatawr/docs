@@ -213,7 +213,10 @@ def vertical_resonance(gradient_context, gradient_agent, gradient_swarm):
     if vertical_alignment > VERTICAL_THRESHOLD:
         # Паттерн резонирует сквозь всю иерархию
         # Это признак фундаментального инварианта
-        cross_layer_resonance = 1 + γ * vertical_alignment
+        cross_layer_resonance = min(
+            1 + γ * vertical_alignment,
+            MAX_RESONANCE_FACTOR  # cap на 2.0, защита от exponential amplification
+        )
 
         # Усиливаем на всех уровнях одновременно
         gradient_context *= cross_layer_resonance
@@ -600,16 +603,16 @@ class LoRALayer:
         )
 
         if current_entropy > self.max_entropy:
-            # Слишком много дисперсии - экранируем самые важные
-            top_k_patterns = self.rank_by_importance()[:k]
-            for pattern in top_k_patterns:
-                pattern.force_screen()  # принудительная стабилизация
+            # Слишком много дисперсии - повышаем порог для экранирования
+            # Параметры с высокой активностью естественно перейдут в SCREENED
+            self.screening_threshold *= 1.1
+            # Emergent стабилизация, не принудительная
 
         elif current_entropy < self.min_entropy:
-            # Система застыла - освобождаем старое
-            oldest_patterns = self.rank_by_age()[:k]
-            for pattern in oldest_patterns:
-                pattern.force_disperse()  # принудительное забывание
+            # Система застыла - понижаем порог
+            # Параметры естественно освобождаются для дисперсии
+            self.screening_threshold *= 0.9
+            # Emergent освобождение, не принудительное
 
         # Иначе - система в гомеостазе, не вмешиваемся
 ```
@@ -651,6 +654,11 @@ class MigrationQueue:
     def migrate_pattern(self, pattern):
         pattern_size = pattern.parameter_count / from_layer.total_params
 
+        # Emergency bypass для критически важных паттернов
+        if pattern.criticality > EMERGENCY_THRESHOLD:
+            execute_migration(pattern, to_layer)
+            return  # минуя bandwidth ограничения
+
         if self.current_transfer + pattern_size <= self.bandwidth:
             # Канал не перегружен - мигрируем сразу
             execute_migration(pattern, to_layer)
@@ -684,6 +692,59 @@ bandwidth[layer_i → layer_j] ∝ 1 / (effective_inertia[layer_j])
 ```
 
 Чем выше инерция целевого слоя, тем уже канал к нему.
+
+#### G. Координация механизмов - порядок применения
+
+**Проблема:** Множественные механизмы (vertical resonance, entropy budget, bandwidth) могут конфликтовать.
+
+**Решение через явный execution order:**
+
+```python
+def system_tick():
+    """Один цикл обновления системы"""
+
+    # 1. Entropy Budget проверяется первым (гомеостаз имеет приоритет)
+    for layer in all_layers:
+        layer.maintain_homeostasis()
+        # Adjust screening_threshold если entropy out of bounds
+
+    # 2. Vertical Resonance вычисляет усиления/ослабления
+    gradients = collect_all_gradients()
+    gradients = apply_vertical_resonance(gradients)
+
+    # 3. Применяем градиенты с учетом резонанса
+    for layer, grad in zip(all_layers, gradients):
+        layer.apply_gradient(grad)
+
+    # 4. Autocorrelation детектирует кандидатов на миграцию
+    migration_candidates = []
+    for layer in fast_layers:
+        patterns = layer.detect_stable_patterns()
+        migration_candidates.extend(patterns)
+
+    # 5. Bandwidth фильтрует и ставит в очередь
+    for pattern in migration_candidates:
+        target_layer = determine_target(pattern)
+        migration_queue[target_layer].migrate_pattern(pattern)
+
+    # 6. Migration выполняется в пределах bandwidth
+    for queue in all_migration_queues:
+        queue.tick()  # process pending migrations
+```
+
+**Приоритеты при конфликтах:**
+```
+1. Emergency patterns (criticality > threshold) - bypass всё
+2. Entropy Budget - если система вне гомеостаза, блокирует новые миграции
+3. Bandwidth - ограничивает скорость миграций
+4. Vertical Resonance - влияет на силу градиентов, но не блокирует
+```
+
+**Критерий здоровья:**
+```python
+conflict_rate = count(rejected_by_mechanism) / count(all_operations)
+# Здоровая система: conflict_rate < 1%
+```
 
 ## Emergent поведение
 
@@ -981,6 +1042,97 @@ elif influence(lora_domain) > 0.8:
     print("Using established domain patterns - reliable")
 ```
 
+### 9. Health Metrics для v1.1
+
+**Индикаторы здоровья системы:**
+
+```python
+class SystemHealthMonitor:
+    """Мониторинг состояния Dynamic LoRA системы"""
+
+    def check_entropy_health(self, layer):
+        """Проверка entropy balance"""
+        entropy_ratio = layer.current_entropy / layer.optimal_entropy()
+
+        if 0.8 < entropy_ratio < 1.2:
+            return "HEALTHY"
+        elif entropy_ratio < 0.5:
+            return "WARNING: Кристаллизация (слишком стабильно)"
+        elif entropy_ratio > 2.0:
+            return "WARNING: Амнезия (слишком пластично)"
+        else:
+            return "ACCEPTABLE"
+
+    def check_bandwidth_health(self):
+        """Проверка migration queues"""
+        metrics = {}
+        for channel, queue in self.migration_queues.items():
+            metrics[channel] = {
+                'queue_depth': len(queue.pending),
+                'avg_wait_time': queue.average_wait_time(),
+                'rejection_rate': queue.rejection_count / queue.total_requests
+            }
+
+        # Здоровая система
+        healthy = all(
+            m['queue_depth'] < 10 and
+            m['avg_wait_time'] < 5 and
+            m['rejection_rate'] < 0.01
+            for m in metrics.values()
+        )
+        return "HEALTHY" if healthy else "DEGRADED"
+
+    def check_resonance_health(self):
+        """Проверка vertical resonance"""
+        alignments = self.collect_vertical_alignments()
+
+        # Distribution не должна быть peaked at 0
+        mean_alignment = np.mean(alignments)
+        std_alignment = np.std(alignments)
+
+        fast_track_rate = self.count_fast_track() / self.total_migrations
+        conflict_rate = self.count_conflicts() / self.total_operations
+
+        healthy = (
+            abs(mean_alignment) > 0.1 and  # есть signal
+            0.05 < fast_track_rate < 0.20 and  # 5-20% fast-track
+            conflict_rate < 0.05  # < 5% конфликтов
+        )
+        return "HEALTHY" if healthy else "DEGRADED"
+
+    def check_cross_mechanism_health(self):
+        """Проверка взаимодействия механизмов"""
+        conflict_rate = self.mechanism_conflicts / self.total_ticks
+
+        if conflict_rate < 0.01:
+            return "HEALTHY"
+        elif conflict_rate < 0.05:
+            return "ACCEPTABLE"
+        else:
+            return "CRITICAL: Механизмы конфликтуют"
+
+    def overall_health(self):
+        """Общая оценка системы"""
+        scores = {
+            'entropy': self.check_entropy_health_all(),
+            'bandwidth': self.check_bandwidth_health(),
+            'resonance': self.check_resonance_health(),
+            'coordination': self.check_cross_mechanism_health()
+        }
+        return scores
+```
+
+**Критические пороги:**
+
+| Метрика | Healthy | Warning | Critical |
+|---------|---------|---------|----------|
+| entropy_ratio | 0.8-1.2 | 0.5-0.8 или 1.2-2.0 | <0.5 или >2.0 |
+| queue_depth | <10 | 10-50 | >50 |
+| avg_wait_time | <5 ticks | 5-20 ticks | >20 ticks |
+| rejection_rate | <1% | 1-5% | >5% |
+| fast_track_rate | 5-20% | 1-5% или 20-40% | <1% или >40% |
+| conflict_rate | <1% | 1-5% | >5% |
+
 ## Сравнение с существующими подходами
 
 | Подход | Сильные стороны | Слабости | Наше решение |
@@ -1188,17 +1340,20 @@ Setup:
 Сценарий A: Без entropy budget (control)
 Сценарий B: С фиксированным budget
 Сценарий C: С adaptive budget (optimal_entropy ∝ log(complexity))
+Сценарий D: С dynamic boundaries (сами min/max entropy emergent)
 
 Метрики:
 - Доля параметров в SCREENED vs FREE режиме
 - Catastrophic forgetting rate
 - Adaptation speed к новым задачам
 - Система впадает в кристаллизацию или амнезию?
+- Стабильность boundaries в сценарии D
 
 Гипотеза:
 - Без budget: система дрейфует в крайности (либо все SCREENED, либо все FREE)
 - С фиксированным budget: стабильна для определенной сложности, но не адаптируется
 - С adaptive budget: поддерживает гомеостаз для любой сложности
+- С dynamic boundaries: полностью emergent, boundaries адаптируются к task complexity
 ```
 
 #### Experiment 10: Bandwidth - защита от migration avalanche
@@ -1210,20 +1365,24 @@ Setup:
 Сценарий A: Без bandwidth ограничений
 Сценарий B: С фиксированными bandwidth
 Сценарий C: С адаптивными bandwidth ∝ 1/effective_inertia
+Сценарий D: С emergency bypass (критичные паттерны bypass очередь)
 
 Триггер лавины:
 - 50 паттернов в context достигают autocorr > threshold одновременно
+- 3 из них критически важные (high criticality)
 - Все пытаются мигрировать в agent
 
 Метрики:
 - Stability целевого слоя (variance до/после миграции)
 - Quality фильтрации (мигрировали ли действительно устойчивые паттерны?)
 - Time to stabilization после лавины
+- Emergency patterns latency (задержка для критичных паттернов)
 
 Ожидаемый результат:
 - A: Целевой слой коллапсирует (слишком много изменений сразу)
-- B: Очередь защищает, но некоторые важные паттерны застревают
+- B: Очередь защищает, но важные паттерны застревают
 - C: Bandwidth автоматически расширяется для быстрых слоев, сужается для медленных
+- D: Критичные паттерны мигрируют мгновенно, остальные в очереди
 ```
 
 #### Experiment 11: Вертикальный резонанс - детектор универсальных принципов
@@ -1242,6 +1401,7 @@ Setup:
 - Скорость миграции каждого типа паттернов
 - Финальное распределение: где остались Type 1, 2, 3?
 - Universality score корреляция с реальной полезностью
+- False positive rate (паттерны с высоким alignment, но низкой utility)
 
 Гипотеза:
 - A: Все паттерны мигрируют с одинаковой скоростью (по autocorr)
@@ -1252,6 +1412,9 @@ Setup:
 Валидация:
 - Если вертикальный резонанс работает → универсальные паттерны должны
   закрепиться в медленных слоях БЫСТРЕЕ, чем через обычный autocorr
+- После миграции проверить actual usefulness на всех уровнях
+- Correlation между vertical_alignment и real_utility должна быть > 0.7
+- False positive rate < 5% (случайные паттерны не должны проходить)
 ```
 
 ## Meta-архитектура: Emergent иерархия
@@ -1398,9 +1561,11 @@ LoRA не просто адаптер весов - это **живое прос�
 8. **Коллективную память** без централизованной координации
 9. **Continuous learning** без катастрофического забывания
 10. **Имплицитную коммуникацию** через искривление parameter space
-11. **Entropy budget** - гомеостатический баланс между кристаллизацией и амнезией
-12. **Bandwidth limitations** - защита от migration avalanche, emergent иерархия скоростей
-13. **Вертикальный резонанс** - детектор универсальных принципов сквозь слои
+11. **Entropy budget** - гомеостатический баланс с emergent thresholds
+12. **Bandwidth limitations** - защита от migration avalanche с emergency bypass
+13. **Вертикальный резонанс** - детектор универсальных принципов с amplification cap
+14. **Координацию механизмов** - явный execution order, разрешение конфликтов
+15. **Health metrics** - мониторинг системы в реальном времени
 
 **Фундаментальный сдвиг:**
 
@@ -1439,9 +1604,18 @@ LoRA не просто адаптер весов - это **живое прос�
 - Meta-архитектура с динамической иерархией
 
 **Дополнения стабилизации (v1.1):**
-- Entropy budget - гомеостатический механизм против крайностей
-- Bandwidth limitations - защита от migration avalanche
-- Вертикальная резонансная композиция - детектор универсальных принципов
-- Расширенные эксперименты 9-11 для валидации новых механизмов
+- Entropy budget - гомеостатический механизм с emergent thresholds (не force operations)
+- Bandwidth limitations - защита от migration avalanche с emergency bypass
+- Вертикальная резонансная композиция - детектор универсальных принципов с amplification cap
+- Координация механизмов - явный execution order для разрешения конфликтов
+- Health metrics - мониторинг состояния системы (entropy, bandwidth, resonance, coordination)
+- Расширенные эксперименты 9-11 с дополнительными сценариями
+
+**Исправления из code review (v1.1 → v1.1.1):**
+- Cap на vertical resonance для защиты от exponential amplification
+- Emergent thresholds вместо force_screen/force_disperse
+- Emergency bypass для критичных паттернов в bandwidth queue
+- Explicit coordination layer между механизмами
+- Comprehensive health metrics с критическими порогами
 
 **Требуется:** Экспериментальная валидация фундаментальных гипотез
